@@ -129,12 +129,15 @@ def finding_review_key(finding: Finding) -> str:
 def build_findings_dataframe(
     findings: list[Finding],
     reviews: dict[str, dict[str, str]],
+    selected_findings: list[str] | None = None,
 ) -> pd.DataFrame:
+    selected_ids = set(selected_findings or [])
     rows = []
     for finding in findings:
         review = reviews.get(finding_review_key(finding), {})
         rows.append(
             {
+                "Selecionar": finding_review_key(finding) in selected_ids,
                 "ID": finding_review_key(finding),
                 "Tipo": finding.category,
                 "Resultado": finding.title,
@@ -146,7 +149,7 @@ def build_findings_dataframe(
                 "Observação": review.get("Observação", ""),
             }
         )
-    return pd.DataFrame(rows, columns=["ID", *REPORT_COLUMNS])
+    return pd.DataFrame(rows, columns=["Selecionar", "ID", *REPORT_COLUMNS])
 
 
 def consolidate_findings(results: list[SourceResult]) -> list[Finding]:
@@ -241,11 +244,19 @@ if submitted:
             "results": results,
             "shortcuts": shortcuts,
             "reviews": {},
+            "selected_findings": [],
             "generated_at": datetime.now().astimezone().strftime("%Y-%m-%d %H:%M %Z"),
         }
 
 research = st.session_state.get("research")
+if research and research.pop("reset_findings_editor", False):
+    reset_findings_editor()
+
 if research:
+    review_notice = research.pop("review_notice", None)
+    if review_notice:
+        st.success(review_notice)
+
     st.divider()
     result_heading = st.container()
     result_heading.subheader(f"Exposição encontrada: {research['brand']}")
@@ -346,13 +357,22 @@ if research:
 
     if visible_findings:
         edited_findings = st.data_editor(
-            build_findings_dataframe(visible_findings, research["reviews"]),
+            build_findings_dataframe(
+                visible_findings,
+                research["reviews"],
+                research.get("selected_findings", []),
+            ),
             hide_index=True,
             width="stretch",
             height=min(600, 42 * (len(visible_findings) + 1)),
             key=f"findings_editor_{selected_filter}",
             disabled=["ID", *RESULT_COLUMNS],
             column_config={
+                "Selecionar": st.column_config.CheckboxColumn(
+                    "Selecionar",
+                    help="Marque os registros que receberão a classificação em lote.",
+                    width="small",
+                ),
                 "ID": None,
                 "Tipo": st.column_config.TextColumn("Tipo", width="medium"),
                 "Resultado": st.column_config.TextColumn("Resultado", width="medium"),
@@ -372,16 +392,70 @@ if research:
                 ),
             },
         )
+        selected_ids = set(research.get("selected_findings", []))
+        visible_ids = {
+            finding_review_key(finding) for finding in visible_findings
+        }
+        selected_ids.difference_update(visible_ids)
         for row in edited_findings.to_dict(orient="records"):
             research["reviews"][row["ID"]] = {
                 "Triagem": row["Triagem"],
                 "Observação": row["Observação"],
             }
+            if row["Selecionar"]:
+                selected_ids.add(row["ID"])
+        research["selected_findings"] = sorted(selected_ids)
     else:
         st.info(
             "Nenhum item nesta categoria.",
             icon=":material/filter_alt_off:",
         )
+
+    selected_count = len(research.get("selected_findings", []))
+    with st.container(border=True):
+        st.subheader("Triagem em lote")
+        st.caption(
+            f"{selected_count} registro(s) selecionado(s). "
+            "A observação compartilhada é opcional; se ficar vazia, "
+            "as observações individuais serão mantidas."
+        )
+        with st.form("bulk_review_form"):
+            bulk_status_column, bulk_note_column, bulk_action_column = st.columns(
+                [2, 4, 1],
+                vertical_alignment="bottom",
+            )
+            bulk_status = bulk_status_column.selectbox(
+                "Classificação para os selecionados",
+                options=REVIEW_STATUSES,
+                index=1,
+            )
+            bulk_observation = bulk_note_column.text_input(
+                "Observação compartilhada",
+                placeholder="Opcional — mantém as observações atuais se ficar vazia",
+            )
+            apply_bulk_review = bulk_action_column.form_submit_button(
+                "Aplicar",
+                type="primary",
+                icon=":material/check:",
+                width="stretch",
+                disabled=selected_count == 0,
+            )
+        if apply_bulk_review:
+            selected_ids = set(research.get("selected_findings", []))
+            for finding_id in selected_ids:
+                review = research["reviews"].setdefault(
+                    finding_id,
+                    {"Triagem": REVIEW_STATUSES[0], "Observação": ""},
+                )
+                review["Triagem"] = bulk_status
+                if bulk_observation.strip():
+                    review["Observação"] = bulk_observation.strip()
+            research["selected_findings"] = []
+            research["reset_findings_editor"] = True
+            research["review_notice"] = (
+                f"Classificação aplicada a {len(selected_ids)} registro(s)."
+            )
+            st.rerun()
 
     with st.expander("Como os candidatos foram inferidos"):
         st.write("**Termos:**", ", ".join(research["terms"]))

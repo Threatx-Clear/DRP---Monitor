@@ -10,7 +10,7 @@ Piloto local para pesquisa passiva de uma empresa. A tela principal pede somente
 - **Anúncios:** oferece atalhos separados dos achados para pesquisar o nome nas bibliotecas públicas da Meta e do Google. São links para pesquisa manual, não anúncios coletados; sem uma API autorizada, o app não importa anúncios.
 - **Documentos:** oferece atalhos separados dos achados para pesquisar PDFs indexados no Google e no Bing (`filetype:pdf`) e documentos no Scribd. Os documentos e resultados dessas buscas não são importados automaticamente.
 
-A lista de achados e o CSV contêm somente resultados das fontes consultadas. O relatório HTML mantém os atalhos em uma seção própria, separada da tabela de achados. Na tabela, cada achado pode ser classificado como pendente, relevante, falso positivo ou validado, com uma observação do analista; a classificação e a observação seguem nos downloads CSV e HTML. A revisão fica guardada na sessão atual e não é persistida após encerrar o app.
+A lista de achados e o CSV contêm somente resultados das fontes consultadas. O relatório HTML mantém os atalhos em uma seção própria, separada da tabela de achados. Na tabela, cada achado pode ser classificado como pendente, relevante, falso positivo ou validado, com uma observação do analista; a classificação e a observação seguem nos downloads CSV e HTML. Também é possível selecionar vários registros e aplicar a mesma classificação em lote. A observação compartilhada em lote é opcional: se informada, substitui as observações dos selecionados; se ficar vazia, as observações individuais são mantidas. A revisão fica guardada na sessão atual e não é persistida após encerrar o app.
 
 Facebook, OLX e Shopee não são cobertos pelo verificador Sherlock incluído neste piloto. Os resultados variam por fonte e podem conter falsos positivos. A presença de um username ou certificado não confirma vínculo com a empresa nem indica fraude.
 
@@ -64,7 +64,7 @@ As consultas são feitas pelo servidor hospedado, compartilhando as cotas das fo
 .\.venv\Scripts\python.exe -m streamlit run app.py
 ```
 
-Digite o nome da empresa e clique em **Pesquisar**. A interface oferece filtros por categoria, triagem editável dos achados, status das fontes, atalhos de pesquisa manual e downloads CSV/HTML. O tema claro/escuro pode ser alterado pelo menu do Streamlit.
+Digite o nome da empresa e clique em **Pesquisar**. A interface oferece filtros por categoria, triagem individual ou em lote dos achados, status das fontes, atalhos de pesquisa manual e downloads CSV/HTML. Para classificar em lote, marque os registros na coluna **Selecionar**, escolha a classificação e clique em **Aplicar**. O tema claro/escuro pode ser alterado pelo menu do Streamlit.
 
 ## Testes
 
