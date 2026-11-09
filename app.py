@@ -3,6 +3,7 @@ from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime
 from html import escape
 from io import StringIO
+from urllib.parse import urlsplit
 
 import pandas as pd
 import streamlit as st
@@ -28,13 +29,14 @@ RESULT_COLUMNS = ["Tipo", "Resultado", "Fonte", "Evidência", "Data", "Link"]
 REPORT_COLUMNS = [*RESULT_COLUMNS, "Triagem", "Observação"]
 FINDINGS_TABLE_COLUMNS = [
     "URL",
-    "Abrir fonte",
-    "Tipo",
     "Resultado",
+    "Abrir fonte",
+    "Selecionar",
+    "Triagem",
+    "Tipo",
     "Fonte",
     "Evidência",
     "Data",
-    "Triagem",
     "Observação",
 ]
 RESULT_FILTERS = ("Tudo", "Perfis", "Sites e domínios")
@@ -137,6 +139,14 @@ def finding_review_key(finding: Finding) -> str:
     return f"{finding.source}|{finding.url.rstrip('/').casefold()}"
 
 
+def compact_table_url(url: str) -> str:
+    parsed_url = urlsplit(url)
+    display_url = f"{parsed_url.netloc}{parsed_url.path}"
+    if len(display_url) <= 64:
+        return display_url
+    return f"{display_url[:44]}…{display_url[-17:]}"
+
+
 def build_findings_dataframe(
     findings: list[Finding],
     reviews: dict[str, dict[str, str]],
@@ -155,13 +165,13 @@ def build_findings_dataframe(
                 "Fonte": finding.source,
                 "Evidência": finding.details,
                 "Data": finding.observed_at,
-                "URL": finding.url,
+                "URL": compact_table_url(finding.url),
                 "Abrir fonte": finding.url,
                 "Triagem": review.get("Triagem", REVIEW_STATUSES[0]),
                 "Observação": review.get("Observação", ""),
             }
         )
-    return pd.DataFrame(rows, columns=["Selecionar", "ID", *FINDINGS_TABLE_COLUMNS])
+    return pd.DataFrame(rows, columns=["ID", *FINDINGS_TABLE_COLUMNS])
 
 
 def reset_result_filter() -> None:
@@ -367,7 +377,9 @@ if research:
             ),
             hide_index=True,
             width="stretch",
-            height=min(600, 42 * (len(visible_findings) + 1)),
+            height=min(700, 56 * (len(visible_findings) + 1)),
+            row_height=56,
+            column_order=FINDINGS_TABLE_COLUMNS,
             key=f"findings_editor_{selected_filter}",
             disabled=[
                 "ID",
@@ -388,7 +400,10 @@ if research:
                 "ID": None,
                 "URL": st.column_config.TextColumn(
                     "URL",
-                    help="Endereço completo do resultado.",
+                    help=(
+                        "Visualização compacta do domínio e caminho. "
+                        "Abrir fonte usa o endereço completo."
+                    ),
                     width="large",
                     pinned=True,
                 ),
@@ -402,7 +417,7 @@ if research:
                 "Tipo": st.column_config.TextColumn("Tipo", width="medium"),
                 "Resultado": st.column_config.TextColumn("Resultado", width="medium"),
                 "Fonte": st.column_config.TextColumn("Fonte", width="medium"),
-                "Evidência": st.column_config.TextColumn("Evidência", width="large"),
+                "Evidência": st.column_config.TextColumn("Evidência", width="medium"),
                 "Data": st.column_config.TextColumn("Data", width="small"),
                 "Triagem": st.column_config.SelectboxColumn(
                     "Triagem",
