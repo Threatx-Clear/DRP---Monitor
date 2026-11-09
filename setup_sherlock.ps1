@@ -19,7 +19,17 @@ if ($LASTEXITCODE -ne 0) {
     throw "Não foi possível instalar o Sherlock."
 }
 
+uv pip install --python $python "maigret==0.6.6"
+if ($LASTEXITCODE -ne 0) {
+    throw "Não foi possível instalar o Maigret."
+}
+
 & $python -m sherlock_project --version
 if ($LASTEXITCODE -ne 0) {
     throw "Sherlock foi instalado, mas o teste de versão falhou."
+}
+
+& $python -m maigret --version
+if ($LASTEXITCODE -ne 0) {
+    throw "Maigret foi instalado, mas o teste de versão falhou."
 }

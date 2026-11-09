@@ -1,4 +1,5 @@
 import ipaddress
+import json
 import re
 import subprocess
 import sys
@@ -24,6 +25,8 @@ MAX_DOMAINS_PER_URLSCAN_QUERY = 48
 MAX_URLSCAN_QUERY_RESULTS = 100
 MAX_PARALLEL_URLSCAN_QUERIES = 3
 SHERLOCK_TIMEOUT = 120
+MAIGRET_TIMEOUT = 240
+MAX_SHERLOCK_USERNAMES = 10
 SHERLOCK_SITES = (
     "Instagram",
     "LinkedIn",
@@ -110,14 +113,22 @@ def infer_usernames(brand: str) -> list[str]:
         return []
     candidates = [*slugs]
     for slug in slugs:
-        candidates.extend([f"{slug}oficial", f"oficial{slug}", f"{slug}br"])
+        candidates.extend(
+            [
+                f"{slug}oficial",
+                f"oficial{slug}",
+                f"{slug}br",
+                f"{slug}brasil",
+                f"oficial{slug}br",
+            ]
+        )
     return list(
         dict.fromkeys(
             candidate
             for candidate in candidates
-            if 2 <= len(candidate) <= 30
+            if re.fullmatch(r"[A-Za-z0-9._-]{2,30}", candidate)
         )
-    )[:4]
+    )[:MAX_SHERLOCK_USERNAMES]
 
 
 def infer_domain_candidates(brand: str) -> list[str]:
@@ -679,7 +690,7 @@ def search_sherlock_usernames(usernames: list[str]) -> SourceResult:
         )
     if not usernames:
         return SourceResult(name="Perfis — Sherlock", findings=[])
-    if len(usernames) > 4 or any(
+    if len(usernames) > MAX_SHERLOCK_USERNAMES or any(
         not re.fullmatch(r"[A-Za-z0-9._-]{2,30}", username)
         for username in usernames
     ):
@@ -730,3 +741,125 @@ def search_sherlock_usernames(usernames: list[str]) -> SourceResult:
             error=error[:500] or f"Sherlock terminou com código {completed.returncode}.",
         )
     return SourceResult(name="Perfis — Sherlock", findings=findings)
+
+
+def _parse_maigret_output(output: str) -> list[Finding]:
+    records = json.loads(output)
+    if not isinstance(records, list):
+        raise ValueError("A saída do Maigret tem um formato inesperado.")
+
+    findings = []
+    for record in records:
+        if not isinstance(record, dict):
+            raise ValueError("A saída do Maigret tem um formato inesperado.")
+        site = record.get("site")
+        profile_url = record.get("url")
+        if not isinstance(site, str) or not isinstance(profile_url, str):
+            raise ValueError("A saída do Maigret tem um formato inesperado.")
+        if not _is_https_url(profile_url):
+            continue
+        findings.append(
+            Finding(
+                category="Perfil público — username candidato",
+                source=f"Maigret — {site}",
+                title=profile_url.rstrip("/").rsplit("/", 1)[-1],
+                url=profile_url,
+                observed_at="",
+                details=(
+                    "Maigret reportou um perfil para um username inferido a partir "
+                    "do nome da empresa. Isso não confirma vínculo ou oficialidade."
+                ),
+            )
+        )
+    return findings
+
+
+def search_maigret_usernames(usernames: list[str]) -> SourceResult:
+    if not SHERLOCK_PYTHON.is_file():
+        return SourceResult(
+            name="Perfis — Maigret",
+            findings=[],
+            error=(
+                "Maigret não está instalado neste ambiente. No Windows, execute "
+                "setup_sherlock.ps1; no Streamlit Cloud, confira as dependências "
+                "do requirements.txt e os logs de implantação."
+            ),
+        )
+    if not usernames:
+        return SourceResult(name="Perfis — Maigret", findings=[])
+    if len(usernames) > MAX_SHERLOCK_USERNAMES or any(
+        not re.fullmatch(r"[A-Za-z0-9._-]{2,30}", username)
+        for username in usernames
+    ):
+        return SourceResult(
+            name="Perfis — Maigret",
+            findings=[],
+            error="A lista de usernames candidatos é inválida.",
+        )
+
+    try:
+        completed = subprocess.run(
+            [
+                str(SHERLOCK_PYTHON),
+                "-m",
+                "maigret_runner",
+                *usernames,
+            ],
+            capture_output=True,
+            text=True,
+            timeout=MAIGRET_TIMEOUT,
+            check=False,
+            cwd=Path(__file__).resolve().parent,
+        )
+    except subprocess.TimeoutExpired:
+        return SourceResult(
+            name="Perfis — Maigret",
+            findings=[],
+            error=f"A consulta do Maigret excedeu {MAIGRET_TIMEOUT} segundos.",
+        )
+    except OSError as error:
+        return SourceResult(name="Perfis — Maigret", findings=[], error=str(error))
+
+    try:
+        findings = _parse_maigret_output(completed.stdout)
+    except (json.JSONDecodeError, ValueError) as error:
+        return SourceResult(
+            name="Perfis — Maigret",
+            findings=[],
+            error=f"Não foi possível interpretar a resposta do Maigret: {error}",
+        )
+
+    if completed.returncode != 0:
+        error = completed.stderr.strip() or completed.stdout.strip()
+        return SourceResult(
+            name="Perfis — Maigret",
+            findings=findings,
+            error=error[:500] or f"Maigret terminou com código {completed.returncode}.",
+        )
+    return SourceResult(name="Perfis — Maigret", findings=findings)
+
+
+def consolidate_findings(results: list[SourceResult]) -> list[Finding]:
+    findings: list[Finding] = []
+    indexes_by_url: dict[str, int] = {}
+    for result in results:
+        for finding in result.findings:
+            existing_index = indexes_by_url.get(finding.url)
+            if existing_index is None:
+                indexes_by_url[finding.url] = len(findings)
+                findings.append(finding)
+                continue
+
+            existing = findings[existing_index]
+            sources = dict.fromkeys(
+                [*existing.source.split(" · "), *finding.source.split(" · ")]
+            )
+            findings[existing_index] = Finding(
+                category=existing.category,
+                source=" · ".join(sources),
+                title=existing.title,
+                url=existing.url,
+                observed_at=existing.observed_at or finding.observed_at,
+                details=existing.details,
+            )
+    return findings

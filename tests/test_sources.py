@@ -4,9 +4,13 @@ from unittest.mock import Mock, patch
 import requests
 
 from sources import (
+    Finding,
+    SourceResult,
+    _parse_maigret_output,
     _parse_sherlock_output,
     build_ad_library_findings,
     build_document_search_findings,
+    consolidate_findings,
     infer_brand_terms,
     infer_domain_candidates,
     infer_typosquat_candidates,
@@ -14,6 +18,7 @@ from sources import (
     normalize_domain,
     search_certificates,
     search_public_sites,
+    search_maigret_usernames,
     search_sherlock_usernames,
     search_urlscan_domains,
     validate_scope,
@@ -30,12 +35,30 @@ class InferenceTests(unittest.TestCase):
         )
         self.assertEqual(
             infer_usernames(brand),
-            ["boticario", "oboticario", "boticariooficial", "oficialboticario"],
+            [
+                "boticario",
+                "oboticario",
+                "boticariooficial",
+                "oficialboticario",
+                "boticariobr",
+                "boticariobrasil",
+                "oficialboticariobr",
+                "oboticariooficial",
+                "oficialoboticario",
+                "oboticariobr",
+            ],
         )
         self.assertEqual(
             infer_domain_candidates(brand),
             ["boticario.com.br", "boticario.com"],
         )
+
+    def test_infers_up_to_ten_valid_sherlock_usernames(self):
+        usernames = infer_usernames("O Boticário")
+
+        self.assertEqual(len(usernames), 10)
+        self.assertIn("boticariobrasil", usernames)
+        self.assertTrue(all(2 <= len(username) <= 30 for username in usernames))
 
     def test_deduplicates_search_terms_without_case_sensitivity(self):
         self.assertEqual(infer_brand_terms("Wepink"), ["Wepink"])
@@ -83,6 +106,57 @@ class InferenceTests(unittest.TestCase):
         self.assertIn("O+Botic%C3%A1rio", findings[2].url)
         self.assertTrue(
             all("não são coletados" in finding.details for finding in findings)
+        )
+
+    def test_consolidates_exact_urls_and_preserves_distinct_paths_and_sources(self):
+        first = Finding(
+            category="Site",
+            source="URLScan — termo A",
+            title="Resultado",
+            url="https://example.com/page",
+            observed_at="",
+            details="Detalhe",
+        )
+        duplicate = Finding(
+            category="Site",
+            source="URLScan — termo B",
+            title="Resultado repetido",
+            url="https://example.com/page",
+            observed_at="",
+            details="Outro detalhe",
+        )
+        distinct_path = Finding(
+            category="Site",
+            source="URLScan — termo A",
+            title="Outra página",
+            url="https://example.com/other",
+            observed_at="",
+            details="Detalhe",
+        )
+        trailing_slash = Finding(
+            category="Site",
+            source="URLScan — termo A",
+            title="Página",
+            url="https://example.com/page/",
+            observed_at="",
+            details="Detalhe",
+        )
+        results = [
+            SourceResult(name="Sites", findings=[first, duplicate]),
+            SourceResult(name="Outro", findings=[distinct_path, trailing_slash]),
+        ]
+
+        findings = consolidate_findings(results)
+
+        self.assertEqual(len(findings), 3)
+        self.assertEqual(findings[0].source, "URLScan — termo A · URLScan — termo B")
+        self.assertEqual(
+            {finding.url for finding in findings},
+            {
+                "https://example.com/page",
+                "https://example.com/other",
+                "https://example.com/page/",
+            },
         )
 
     def test_rejects_names_without_searchable_letters_or_digits(self):
@@ -339,6 +413,68 @@ class SherlockTests(unittest.TestCase):
         self.assertIn("--local", command)
         self.assertNotIn("Facebook", command)
         self.assertEqual(run.call_args.kwargs["timeout"], 120)
+
+    @patch("sources.SHERLOCK_PYTHON")
+    def test_rejects_more_than_ten_usernames(self, python):
+        python.is_file.return_value = True
+
+        result = search_sherlock_usernames([f"marca{i}" for i in range(11)])
+
+        self.assertEqual(result.findings, [])
+        self.assertIn("inválida", result.error)
+
+
+class MaigretTests(unittest.TestCase):
+    def test_parses_only_found_https_profiles(self):
+        findings = _parse_maigret_output(
+            '[{"site":"Instagram","url":"https://instagram.com/marca/"},'
+            '{"site":"LinkedIn","url":"http://linkedin.com/in/marca"},'
+            '{"site":"Invalid","url":"javascript:alert(1)"}]'
+        )
+
+        self.assertEqual(len(findings), 1)
+        self.assertEqual(findings[0].source, "Maigret — Instagram")
+        self.assertEqual(findings[0].title, "marca")
+
+    def test_rejects_malformed_maigret_output(self):
+        with self.assertRaises(ValueError):
+            _parse_maigret_output('{"site":"Instagram"}')
+
+    @patch("sources.SHERLOCK_PYTHON")
+    def test_reports_when_maigret_is_not_installed(self, python):
+        python.is_file.return_value = False
+
+        result = search_maigret_usernames(["marca"])
+
+        self.assertEqual(result.findings, [])
+        self.assertIn("setup_sherlock.ps1", result.error)
+
+    @patch("sources.subprocess.run")
+    @patch("sources.SHERLOCK_PYTHON")
+    def test_runs_bounded_maigret_runner(self, python, run):
+        python.is_file.return_value = True
+        run.return_value = Mock(
+            returncode=0,
+            stdout='[{"site":"Instagram","url":"https://instagram.com/marca/"}]',
+            stderr="",
+        )
+
+        result = search_maigret_usernames(["marca", "marcaoficial"])
+
+        self.assertEqual(len(result.findings), 1)
+        command = run.call_args.args[0]
+        self.assertEqual(command[:3], [str(python), "-m", "maigret_runner"])
+        self.assertEqual(command[3:], ["marca", "marcaoficial"])
+        self.assertEqual(run.call_args.kwargs["timeout"], 240)
+
+    @patch("sources.SHERLOCK_PYTHON")
+    def test_rejects_more_than_ten_usernames(self, python):
+        python.is_file.return_value = True
+
+        result = search_maigret_usernames([f"marca{i}" for i in range(11)])
+
+        self.assertEqual(result.findings, [])
+        self.assertIn("inválida", result.error)
 
 
 if __name__ == "__main__":

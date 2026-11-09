@@ -26,6 +26,17 @@ st.set_page_config(
 
 RESULT_COLUMNS = ["Tipo", "Resultado", "Fonte", "Evidência", "Data", "Link"]
 REPORT_COLUMNS = [*RESULT_COLUMNS, "Triagem", "Observação"]
+FINDINGS_TABLE_COLUMNS = [
+    "URL",
+    "Abrir fonte",
+    "Tipo",
+    "Resultado",
+    "Fonte",
+    "Evidência",
+    "Data",
+    "Triagem",
+    "Observação",
+]
 RESULT_FILTERS = ("Tudo", "Perfis", "Sites e domínios")
 REVIEW_STATUSES = ("Pendente", "Relevante", "Falso positivo", "Validado")
 
@@ -144,28 +155,13 @@ def build_findings_dataframe(
                 "Fonte": finding.source,
                 "Evidência": finding.details,
                 "Data": finding.observed_at,
-                "Link": finding.url,
+                "URL": finding.url,
+                "Abrir fonte": finding.url,
                 "Triagem": review.get("Triagem", REVIEW_STATUSES[0]),
                 "Observação": review.get("Observação", ""),
             }
         )
-    return pd.DataFrame(rows, columns=["Selecionar", "ID", *REPORT_COLUMNS])
-
-
-def consolidate_findings(results: list[SourceResult]) -> list[Finding]:
-    findings = []
-    seen = set()
-    for source in results:
-        for finding in source.findings:
-            if finding.source.startswith("URLScan"):
-                key = (finding.source, finding.url.rstrip("/").casefold())
-            else:
-                key = (finding.source, finding.url.rstrip("/").casefold())
-            if key in seen:
-                continue
-            seen.add(key)
-            findings.append(finding)
-    return findings
+    return pd.DataFrame(rows, columns=["Selecionar", "ID", *FINDINGS_TABLE_COLUMNS])
 
 
 def reset_result_filter() -> None:
@@ -216,20 +212,24 @@ if submitted:
         st.error(str(error))
     else:
         with st.spinner("Pesquisando fontes públicas. Isso pode levar alguns instantes..."):
-            with ThreadPoolExecutor(max_workers=4) as executor:
+            with ThreadPoolExecutor(max_workers=5) as executor:
                 certificate_future = executor.submit(sources.search_certificates, domains)
                 site_future = executor.submit(sources.search_public_sites, terms, domains)
                 typosquat_future = executor.submit(
                     sources.search_urlscan_domains, domains, typosquats
                 )
-                profile_future = executor.submit(
+                sherlock_future = executor.submit(
                     sources.search_sherlock_usernames, usernames
+                )
+                maigret_future = executor.submit(
+                    sources.search_maigret_usernames, usernames
                 )
                 results = [
                     *certificate_future.result(),
                     typosquat_future.result(),
                     *site_future.result(),
-                    profile_future.result(),
+                    sherlock_future.result(),
+                    maigret_future.result(),
                 ]
         shortcuts = [
             *sources.build_document_search_findings(brand),
@@ -266,7 +266,7 @@ if research:
     )
 
     results: list[SourceResult] = research["results"]
-    findings = consolidate_findings(results)
+    findings = sources.consolidate_findings(results)
     profile_count = sum(
         finding.category == "Perfil público — username candidato"
         for finding in findings
@@ -354,6 +354,9 @@ if research:
     count_column.caption(
         f"Exibindo {len(visible_findings)} de {len(findings)} itens"
     )
+    count_column.caption(
+        "URLs idênticas aparecem uma vez; caminhos diferentes são mantidos."
+    )
 
     if visible_findings:
         edited_findings = st.data_editor(
@@ -366,7 +369,16 @@ if research:
             width="stretch",
             height=min(600, 42 * (len(visible_findings) + 1)),
             key=f"findings_editor_{selected_filter}",
-            disabled=["ID", *RESULT_COLUMNS],
+            disabled=[
+                "ID",
+                "URL",
+                "Abrir fonte",
+                "Tipo",
+                "Resultado",
+                "Fonte",
+                "Evidência",
+                "Data",
+            ],
             column_config={
                 "Selecionar": st.column_config.CheckboxColumn(
                     "Selecionar",
@@ -374,12 +386,24 @@ if research:
                     width="small",
                 ),
                 "ID": None,
+                "URL": st.column_config.TextColumn(
+                    "URL",
+                    help="Endereço completo do resultado.",
+                    width="large",
+                    pinned=True,
+                ),
+                "Abrir fonte": st.column_config.LinkColumn(
+                    "Abrir fonte",
+                    help="Clique em Abrir para visitar o resultado.",
+                    width="small",
+                    display_text="Abrir",
+                    pinned=True,
+                ),
                 "Tipo": st.column_config.TextColumn("Tipo", width="medium"),
                 "Resultado": st.column_config.TextColumn("Resultado", width="medium"),
                 "Fonte": st.column_config.TextColumn("Fonte", width="medium"),
                 "Evidência": st.column_config.TextColumn("Evidência", width="large"),
                 "Data": st.column_config.TextColumn("Data", width="small"),
-                "Link": st.column_config.LinkColumn("Abrir fonte", width="small"),
                 "Triagem": st.column_config.SelectboxColumn(
                     "Triagem",
                     options=REVIEW_STATUSES,
@@ -512,8 +536,9 @@ if research:
     )
     with st.expander("Cobertura e limitações"):
         st.write(
-            "O Sherlock verifica usernames inferidos em Instagram, LinkedIn, TikTok, "
-            "X/Twitter, YouTube, Telegram e Mercado Livre. Facebook, OLX e Shopee "
+            "Sherlock verifica usernames inferidos em Instagram, LinkedIn, TikTok, "
+            "X/Twitter, YouTube, Telegram e Mercado Livre. Maigret consulta Instagram, "
+            "LinkedIn, TikTok, X/Twitter, YouTube e Telegram. Facebook, OLX e Shopee "
             "não estão cobertos. Os atalhos de documentos e anúncios ficam em uma "
             "seção separada dos achados; buscas externas não são importadas automaticamente."
         )
