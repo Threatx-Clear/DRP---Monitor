@@ -192,7 +192,8 @@ st.caption(
 with st.container(border=True):
     st.subheader("Comece pelo nome da marca")
     st.caption(
-        "Os termos, perfis candidatos e possíveis typosquats são inferidos automaticamente."
+        "Os termos, perfis candidatos, possíveis typosquats e domínios com certificados "
+        "recentes são pesquisados automaticamente."
     )
     with st.form("research_form"):
         search_column, button_column = st.columns([4, 1], vertical_alignment="bottom")
@@ -222,8 +223,11 @@ if submitted:
         st.error(str(error))
     else:
         with st.spinner("Pesquisando fontes públicas. Isso pode levar alguns instantes..."):
-            with ThreadPoolExecutor(max_workers=5) as executor:
+            with ThreadPoolExecutor(max_workers=6) as executor:
                 certificate_future = executor.submit(sources.search_certificates, domains)
+                recent_domain_future = executor.submit(
+                    sources.search_recent_certificate_domains, brand
+                )
                 site_future = executor.submit(sources.search_public_sites, terms, domains)
                 typosquat_future = executor.submit(
                     sources.search_urlscan_domains, domains, typosquats
@@ -236,6 +240,7 @@ if submitted:
                 )
                 results = [
                     *certificate_future.result(),
+                    recent_domain_future.result(),
                     typosquat_future.result(),
                     *site_future.result(),
                     sherlock_future.result(),
@@ -561,6 +566,11 @@ if research:
             "O URLScan pode retornar até 100 registros por termo. A quantidade real "
             "depende do acervo disponível e das cotas de consulta."
         )
+        st.caption(
+            "O crt.sh lista até 100 nomes DNS únicos com certificados cujo início de "
+            "validade ocorreu nos últimos 30 dias. Isso não informa a data de registro "
+            "do domínio."
+        )
 
     with st.container(horizontal=True, horizontal_alignment="right"):
         st.download_button(
@@ -597,7 +607,7 @@ else:
         )
         overview[1].markdown(
             "**:material/language: Sites e domínios**  \n"
-            "Certificados, registros do URLScan e variações de typosquatting."
+            "Certificados recentes, registros do URLScan e variações de typosquatting."
         )
         overview[2].markdown(
             "**:material/description: Anúncios e documentos**  \n"

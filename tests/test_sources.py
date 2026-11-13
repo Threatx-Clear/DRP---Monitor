@@ -1,4 +1,5 @@
 import unittest
+from datetime import datetime, timedelta, timezone
 from unittest.mock import Mock, patch
 
 import requests
@@ -18,6 +19,7 @@ from sources import (
     normalize_domain,
     search_certificates,
     search_public_sites,
+    search_recent_certificate_domains,
     search_maigret_usernames,
     search_sherlock_usernames,
     search_urlscan_domains,
@@ -180,6 +182,69 @@ class InferenceTests(unittest.TestCase):
 
 
 class PassiveSourceTests(unittest.TestCase):
+    @patch("sources.requests.get")
+    def test_recent_certificate_search_returns_matching_recent_dns_names(self, get):
+        recent_date = (datetime.now(timezone.utc) - timedelta(days=5)).strftime(
+            "%Y-%m-%dT%H:%M:%S"
+        )
+        old_date = (datetime.now(timezone.utc) - timedelta(days=31)).strftime(
+            "%Y-%m-%dT%H:%M:%S"
+        )
+        response = Mock()
+        response.json.return_value = [
+            {
+                "name_value": "*.boticario-store.test\nboticario-store.test",
+                "not_before": recent_date,
+            },
+            {
+                "name_value": "boticario-store.test",
+                "not_before": recent_date,
+            },
+            {
+                "name_value": "unrelated.test",
+                "not_before": recent_date,
+            },
+            {
+                "name_value": "boticario-old.test",
+                "not_before": old_date,
+            },
+        ]
+        get.return_value = response
+
+        result = search_recent_certificate_domains("O Boticário")
+
+        self.assertIsNone(result.error)
+        self.assertEqual(
+            [finding.title for finding in result.findings],
+            ["boticario-store.test"],
+        )
+        self.assertEqual(
+            result.findings[0].category,
+            "Domínio com certificado recente — revisar",
+        )
+        self.assertIn("não confirma a data de registro", result.findings[0].details)
+        self.assertEqual(get.call_args.kwargs["params"]["q"], "%boticario%")
+        self.assertEqual(get.call_args.kwargs["params"]["match"], "ILIKE")
+
+    @patch("sources.requests.get")
+    def test_recent_certificate_search_skips_terms_shorter_than_three_chars(self, get):
+        result = search_recent_certificate_domains("AB")
+
+        self.assertEqual(result.findings, [])
+        self.assertIn("três caracteres", result.error)
+        get.assert_not_called()
+
+    @patch("sources.requests.get")
+    def test_recent_certificate_search_reports_invalid_payload(self, get):
+        response = Mock()
+        response.json.return_value = {"certificates": []}
+        get.return_value = response
+
+        result = search_recent_certificate_domains("Marca")
+
+        self.assertEqual(result.findings, [])
+        self.assertIn("não contém uma lista", result.error)
+
     @patch("sources.requests.get")
     def test_certificates_return_candidate_subdomains(self, get):
         response = Mock()

@@ -6,6 +6,7 @@ import sys
 import unicodedata
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from urllib.parse import quote, quote_plus, urlsplit
 
@@ -13,12 +14,15 @@ import requests
 
 
 CERTSPOTTER_URL = "https://api.certspotter.com/v1/issuances"
+CRT_SH_URL = "https://crt.sh/"
 URLSCAN_URL = "https://urlscan.io/api/v1/search/"
 REQUEST_TIMEOUT = (5, 20)
 USER_AGENT = "BrandResearchApp/1.0 (passive brand monitoring)"
 MAX_TERMS = 5
 MAX_DOMAINS = 2
 MAX_RESULTS_PER_QUERY = 100
+MAX_RECENT_CT_DOMAINS = 100
+RECENT_CT_DAYS = 30
 MAX_FINDINGS = 500
 MAX_TYPO_VARIANTS = 96
 MAX_DOMAINS_PER_URLSCAN_QUERY = 48
@@ -397,6 +401,98 @@ def _is_https_url(value: str) -> bool:
 def _is_domain_or_subdomain(candidate: str, domains: list[str]) -> bool:
     candidate = candidate.lower().rstrip(".")
     return any(candidate == domain or candidate.endswith(f".{domain}") for domain in domains)
+
+
+def _parse_certificate_date(value: object) -> datetime | None:
+    if not isinstance(value, str):
+        return None
+    try:
+        parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
+    except ValueError:
+        return None
+    if parsed.tzinfo is None:
+        parsed = parsed.replace(tzinfo=timezone.utc)
+    return parsed.astimezone(timezone.utc)
+
+
+def search_recent_certificate_domains(brand: str) -> SourceResult:
+    source_name = "crt.sh — certificados recentes"
+    slugs = _brand_slugs(brand)
+    if not slugs:
+        return SourceResult(name=source_name, findings=[])
+
+    slug = slugs[0]
+    if len(slug) < 3:
+        return SourceResult(
+            name=source_name,
+            findings=[],
+            error="O termo precisa ter ao menos três caracteres para a busca no crt.sh.",
+        )
+    try:
+        response = requests.get(
+            CRT_SH_URL,
+            params={
+                "q": f"%{slug}%",
+                "output": "json",
+                "match": "ILIKE",
+                "exclude": "expired",
+                "deduplicate": "Y",
+            },
+            headers={"User-Agent": USER_AGENT},
+            timeout=REQUEST_TIMEOUT,
+        )
+        _raise_for_source_status(response, "crt.sh")
+        payload = response.json()
+        if not isinstance(payload, list):
+            raise ValueError("a resposta do crt.sh não contém uma lista de certificados")
+
+        now = datetime.now(timezone.utc)
+        cutoff = now - timedelta(days=RECENT_CT_DAYS)
+        recent_domains: dict[str, datetime] = {}
+        for certificate in payload:
+            if not isinstance(certificate, dict):
+                continue
+            issued_at = _parse_certificate_date(certificate.get("not_before"))
+            if issued_at is None or not cutoff <= issued_at <= now:
+                continue
+
+            names = certificate.get("name_value")
+            if not isinstance(names, str) or not names.strip():
+                names = certificate.get("common_name")
+            if not isinstance(names, str):
+                continue
+            for name in names.splitlines():
+                candidate = name.strip().lower().removeprefix("*.").rstrip(".")
+                if slug not in candidate:
+                    continue
+                try:
+                    domain = normalize_domain(candidate)
+                except ValueError:
+                    continue
+                previous_issue = recent_domains.get(domain)
+                if previous_issue is None or issued_at > previous_issue:
+                    recent_domains[domain] = issued_at
+
+        findings = [
+            Finding(
+                category="Domínio com certificado recente — revisar",
+                source="crt.sh — Certificate Transparency",
+                title=domain,
+                url=f"https://crt.sh/?q={quote(domain, safe='')}",
+                observed_at=issued_at.isoformat().replace("+00:00", "Z"),
+                details=(
+                    f"Nome DNS listado em certificado com início de validade nos últimos "
+                    f"{RECENT_CT_DAYS} dias. Isso não confirma a data de registro, "
+                    "a propriedade do domínio ou fraude."
+                ),
+            )
+            for domain, issued_at in sorted(
+                recent_domains.items(), key=lambda item: item[1], reverse=True
+            )[:MAX_RECENT_CT_DOMAINS]
+        ]
+        return SourceResult(name=source_name, findings=findings)
+    except (requests.RequestException, ValueError) as error:
+        return SourceResult(name=source_name, findings=[], error=str(error))
 
 
 def _search_certificates(domain: str) -> SourceResult:
