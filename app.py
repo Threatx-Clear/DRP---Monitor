@@ -556,11 +556,12 @@ if research:
     )
     with st.expander("Cobertura e limitações"):
         st.write(
-            "Sherlock verifica usernames inferidos em Instagram, LinkedIn, TikTok, "
-            "X/Twitter, YouTube, Telegram e Mercado Livre. Maigret consulta Instagram, "
-            "LinkedIn, TikTok, X/Twitter, YouTube e Telegram. Facebook, OLX e Shopee "
-            "não estão cobertos. Os atalhos de documentos e anúncios ficam em uma "
-            "seção separada dos achados; buscas externas não são importadas automaticamente."
+            "Sherlock e Maigret verificam até 30 usernames inferidos. Sherlock consulta "
+            "Instagram, LinkedIn, TikTok, X/Twitter, YouTube, Telegram e Mercado Livre; "
+            "Maigret consulta Instagram, LinkedIn, TikTok, X/Twitter, YouTube e Telegram. "
+            "Facebook, OLX e Shopee não estão cobertos. Os atalhos de documentos e anúncios "
+            "ficam em uma seção separada dos achados; buscas externas não são importadas "
+            "automaticamente."
         )
         st.caption(
             "O URLScan pode retornar até 100 registros por termo. A quantidade real "

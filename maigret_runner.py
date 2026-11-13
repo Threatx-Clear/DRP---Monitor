@@ -13,6 +13,7 @@ from maigret.sites import MaigretDatabase
 SITES = ("Instagram", "LinkedIn", "TikTok", "Twitter", "YouTube", "Telegram")
 TIMEOUT = 8
 MAX_CONNECTIONS = 3
+MAX_USERNAMES = 30
 
 
 async def _search_usernames(usernames: list[str]) -> list[dict[str, str]]:
@@ -45,8 +46,8 @@ async def _search_usernames(usernames: list[str]) -> list[dict[str, str]]:
 def main() -> None:
     logging.basicConfig(stream=sys.stderr, level=logging.CRITICAL)
     usernames = sys.argv[1:]
-    if not usernames or len(usernames) > 10:
-        raise SystemExit("Informe de 1 a 10 usernames.")
+    if not usernames or len(usernames) > MAX_USERNAMES:
+        raise SystemExit(f"Informe de 1 a {MAX_USERNAMES} usernames.")
     if any(
         not re.fullmatch(r"[A-Za-z0-9._-]{2,30}", username)
         for username in usernames

@@ -28,9 +28,9 @@ MAX_TYPO_VARIANTS = 96
 MAX_DOMAINS_PER_URLSCAN_QUERY = 48
 MAX_URLSCAN_QUERY_RESULTS = 100
 MAX_PARALLEL_URLSCAN_QUERIES = 3
-SHERLOCK_TIMEOUT = 120
-MAIGRET_TIMEOUT = 240
-MAX_SHERLOCK_USERNAMES = 10
+SHERLOCK_TIMEOUT = 240
+MAIGRET_TIMEOUT = 360
+MAX_USERNAMES = 30
 SHERLOCK_SITES = (
     "Instagram",
     "LinkedIn",
@@ -126,13 +126,45 @@ def infer_usernames(brand: str) -> list[str]:
                 f"oficial{slug}br",
             ]
         )
+    for slug in slugs:
+        candidates.extend(
+            [
+                f"br{slug}",
+                f"brasil{slug}",
+                f"{slug}oficialbr",
+                f"{slug}oficialbrasil",
+                f"br{slug}oficial",
+                f"brasiloficial{slug}",
+                f"{slug}online",
+                f"online{slug}",
+                f"{slug}loja",
+                f"lojada{slug}",
+                f"{slug}store",
+                f"{slug}shop",
+                f"{slug}outlet",
+                f"use{slug}",
+                f"somos{slug}",
+                f"{slug}_oficial",
+                f"oficial_{slug}",
+                f"{slug}_br",
+                f"{slug}_brasil",
+                f"{slug}.br",
+                f"{slug}.oficial",
+                f"{slug}-br",
+                f"{slug}-oficial",
+                f"br_{slug}",
+                f"brasil_{slug}",
+                f"oficial.{slug}",
+                f"oficial-{slug}",
+            ]
+        )
     return list(
         dict.fromkeys(
             candidate
             for candidate in candidates
             if re.fullmatch(r"[A-Za-z0-9._-]{2,30}", candidate)
         )
-    )[:MAX_SHERLOCK_USERNAMES]
+    )[:MAX_USERNAMES]
 
 
 def infer_domain_candidates(brand: str) -> list[str]:
@@ -786,7 +818,7 @@ def search_sherlock_usernames(usernames: list[str]) -> SourceResult:
         )
     if not usernames:
         return SourceResult(name="Perfis — Sherlock", findings=[])
-    if len(usernames) > MAX_SHERLOCK_USERNAMES or any(
+    if len(usernames) > MAX_USERNAMES or any(
         not re.fullmatch(r"[A-Za-z0-9._-]{2,30}", username)
         for username in usernames
     ):
@@ -883,7 +915,7 @@ def search_maigret_usernames(usernames: list[str]) -> SourceResult:
         )
     if not usernames:
         return SourceResult(name="Perfis — Maigret", findings=[])
-    if len(usernames) > MAX_SHERLOCK_USERNAMES or any(
+    if len(usernames) > MAX_USERNAMES or any(
         not re.fullmatch(r"[A-Za-z0-9._-]{2,30}", username)
         for username in usernames
     ):

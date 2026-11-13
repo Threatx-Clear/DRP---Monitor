@@ -36,7 +36,7 @@ class InferenceTests(unittest.TestCase):
             ["O Boticário", "o boticario", "boticario", "oboticario"],
         )
         self.assertEqual(
-            infer_usernames(brand),
+            infer_usernames(brand)[:10],
             [
                 "boticario",
                 "oboticario",
@@ -55,11 +55,13 @@ class InferenceTests(unittest.TestCase):
             ["boticario.com.br", "boticario.com"],
         )
 
-    def test_infers_up_to_ten_valid_sherlock_usernames(self):
-        usernames = infer_usernames("O Boticário")
+    def test_infers_up_to_thirty_valid_profile_usernames(self):
+        usernames = infer_usernames("Wepink")
 
-        self.assertEqual(len(usernames), 10)
-        self.assertIn("boticariobrasil", usernames)
+        self.assertEqual(len(usernames), 30)
+        self.assertIn("wepinkbrasil", usernames)
+        self.assertIn("wepinkstore", usernames)
+        self.assertEqual(len(set(usernames)), 30)
         self.assertTrue(all(2 <= len(username) <= 30 for username in usernames))
 
     def test_deduplicates_search_terms_without_case_sensitivity(self):
@@ -477,13 +479,13 @@ class SherlockTests(unittest.TestCase):
         self.assertIn("mercadolivre", command)
         self.assertIn("--local", command)
         self.assertNotIn("Facebook", command)
-        self.assertEqual(run.call_args.kwargs["timeout"], 120)
+        self.assertEqual(run.call_args.kwargs["timeout"], 240)
 
     @patch("sources.SHERLOCK_PYTHON")
-    def test_rejects_more_than_ten_usernames(self, python):
+    def test_rejects_more_than_thirty_usernames(self, python):
         python.is_file.return_value = True
 
-        result = search_sherlock_usernames([f"marca{i}" for i in range(11)])
+        result = search_sherlock_usernames([f"marca{i}" for i in range(31)])
 
         self.assertEqual(result.findings, [])
         self.assertIn("inválida", result.error)
@@ -530,13 +532,13 @@ class MaigretTests(unittest.TestCase):
         command = run.call_args.args[0]
         self.assertEqual(command[:3], [str(python), "-m", "maigret_runner"])
         self.assertEqual(command[3:], ["marca", "marcaoficial"])
-        self.assertEqual(run.call_args.kwargs["timeout"], 240)
+        self.assertEqual(run.call_args.kwargs["timeout"], 360)
 
     @patch("sources.SHERLOCK_PYTHON")
-    def test_rejects_more_than_ten_usernames(self, python):
+    def test_rejects_more_than_thirty_usernames(self, python):
         python.is_file.return_value = True
 
-        result = search_maigret_usernames([f"marca{i}" for i in range(11)])
+        result = search_maigret_usernames([f"marca{i}" for i in range(31)])
 
         self.assertEqual(result.findings, [])
         self.assertIn("inválida", result.error)
